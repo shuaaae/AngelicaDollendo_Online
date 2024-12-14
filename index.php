@@ -13,7 +13,66 @@ function debug_to_console($data) {
 
 // Debug session data
 debug_to_console($_SESSION);
+
+// Fetch the username based on the logged-in user's session (if available)
+$username = ""; // Default value
+if (isset($_SESSION['user_id'])) {
+    $userId = $_SESSION['user_id'];
+    $sql = "SELECT uName FROM users WHERE id = ?";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("i", $userId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    if ($result->num_rows > 0) {
+        $user = $result->fetch_assoc();
+        $username = htmlspecialchars($user['uName'], ENT_QUOTES, 'UTF-8'); // Sanitize output
+    }
+}
+
+// Handle the form submission
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    // Get the username from the form (instead of email)
+    if (isset($_POST['uName'])) {
+        $username = $_POST['uName'];
+    } else {
+        // Handle the case where username is not provided (optional, you can set an error message here)
+        $username = '';
+    }
+
+    $password = $_POST['password'];
+
+    // Query the database for the user with the provided username (not email)
+    $sql = "SELECT * FROM users WHERE uName = ?";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("s", $username);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    if ($result->num_rows > 0) {
+        // User found, check the password
+        $user = $result->fetch_assoc();
+        if (password_verify($password, $user['password'])) {
+            // Password matches, set session variables and redirect to dashboard
+            $_SESSION['user_id'] = $user['id']; // Assuming you have a user 'id' field
+            $_SESSION['uName'] = $user['uName']; // Store the username in session
+            $_SESSION['fullname'] = $user['fullname']; // Store fullname in session
+            $_SESSION['email'] = $user['email']; // Store email in sessioni
+
+            // Redirect to customer dashboard
+            header("Location:./customer/dashboard.php");
+            exit();
+        } else {
+            // Incorrect password
+            $message = "Invalid username or password.";
+        }
+    } else {
+        // Username not found
+        $message = "Invalid username or password.";
+    }
+}
 ?>
+
 
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
@@ -152,6 +211,7 @@ debug_to_console($_SESSION);
          form .signup-link a:hover {
            text-decoration: underline;
          }
+
       </style>
    </head>
    <body>
@@ -159,13 +219,13 @@ debug_to_console($_SESSION);
          <div class="title">
             Login Form
          </div>
-         <form action="#">
+         <form action="" method="POST">
+         <div class="field">
+        <input type="text" name="uName" value="<?php echo $username; ?>" required>
+        <label>Username</label>
+    </div>
             <div class="field">
-               <input type="text" required>
-               <label>Email Address</label>
-            </div>
-            <div class="field">
-               <input type="password" required>
+               <input type="password" name="password" required>
                <label>Password</label>
             </div>
             <div class="content">
@@ -181,9 +241,14 @@ debug_to_console($_SESSION);
                <input type="submit" value="Login">
             </div>
             <div class="signup-link">
-               Dont have an account? <a href="createaccount.php">Signup now</a>
+               Don't have an account? <a href="createaccount.php">Signup now</a>
             </div>
          </form>
+         <?php
+            if (isset($message)) {
+                echo "<p style='color: red; text-align: center;'>$message</p>";
+            }
+         ?>
       </div>
    </body>
 </html>

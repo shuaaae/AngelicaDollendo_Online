@@ -1,58 +1,123 @@
 <?php
 session_start();
-
 require 'dbconnect.php';
 
-$conn = new mysqli($servername, $username, $password, $dbname);
+// Enable error reporting for debugging
+error_reporting(E_ALL);
+ini_set('display_errors', '1');
 
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
-}
+// Include PHPMailer
+require 'PHPMailer/src/Exception.php';
+require 'PHPMailer/src/PHPMailer.php';
+require 'PHPMailer/src/SMTP.php';
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
 
 $message = '';
+$message_type = '';
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $fullname = $_POST['fullname'];
-    $email = $_POST['email'];
-    $password = $_POST['password'];
-    $confirm_password = $_POST['confirm_password'];  // Added Confirm Password
-    $account_type = $_POST['account_type'];
+    // Ensure form data is set and not empty
+    if (isset($_POST['fName'], $_POST['username'], $_POST['email'], $_POST['password'], $_POST['confirm_password'])) {
 
-    if ($password !== $confirm_password) {
-        $message = "Passwords do not match. Please try again.";
-    } else {
-        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+        // Sanitize and get form data
+        $fullname = trim($_POST['fName']);
+        $username = trim($_POST['username']);
+        $email = trim($_POST['email']);
+        $password = $_POST['password'];
+        $confirm_password = $_POST['confirm_password'];
 
-        $sql_email_check = "SELECT * FROM users WHERE email = ?";
-        $stmt = $conn->prepare($sql_email_check);
-        $stmt->bind_param("s", $email);
-        $stmt->execute();
-        $stmt->store_result();
+        // If role is not set, default to customer (needed for form submission even if role is disabled)
+        $role = isset($_POST['role']) ? $_POST['role'] : 'customer';
 
-        if ($stmt->num_rows > 0) {
-            $message = "Email already exists. Please use a different email.";
+        // Validate password match
+        if ($password !== $confirm_password) {
+            $message = "Passwords do not match. Please try again.";
         } else {
-            $sql_insert = "INSERT INTO users (fullname, email, password, account_type) VALUES (?, ?, ?, ?)";
-            $stmt = $conn->prepare($sql_insert);
-            $stmt->bind_param("ssss", $fullname, $email, $hashed_password, $account_type);
+            // Hash password
+            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
 
-            if ($stmt->execute()) {
-                $message = "Account created successfully! Redirecting to login page...";
-                echo "<script>setTimeout(function(){ window.location.href = 'index.php'; }, 2000);</script>";
+            // Check if email or username exists
+            $sql_check = "SELECT * FROM users WHERE email = ? OR uName = ?";
+            $stmt = $conn->prepare($sql_check);
+            $stmt->bind_param("ss", $email, $username);
+            $stmt->execute();
+            $stmt->store_result();
+
+            if ($stmt->num_rows > 0) {
+                $message = "Email or Username already exists. Please use different credentials.";
             } else {
-                $message = "Error: " . $stmt->error;
+                // Generate a unique verification token
+                $token = bin2hex(random_bytes(50));
+
+                // Insert user data into the database
+                $sql_insert = "INSERT INTO users (fName, uName, email, password, role, verification_token, is_verified) 
+                               VALUES (?, ?, ?, ?, ?, ?, 0)";
+                $stmt = $conn->prepare($sql_insert);
+                $stmt->bind_param("ssssss", $fullname, $username, $email, $hashed_password, $role, $token);
+
+                if ($stmt->execute()) {
+                    // Send verification email using PHPMailer
+                    $mail = new PHPMailer(true);
+                    try {
+                        // Server settings
+                        $mail->isSMTP();
+                        $mail->Host = 'smtp.gmail.com'; // Use your SMTP server (Gmail example)
+                        $mail->SMTPAuth = true;
+                        $mail->Username = 'lms.sorsu@gmail.com'; // Your email
+                        $mail->Password = 'ouqo pbob gquk opta'; // Your email password or app-specific password
+                        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+                        $mail->Port = 587; // Gmail SMTP Port
+
+                        // Recipients
+                        $mail->setFrom('lms.sorsu@gmail.com', 'Verify Your Account');
+                        $mail->addAddress($email, $fullname); // Add recipient's email
+
+                        // Content
+                        $mail->isHTML(true);
+                        $mail->Subject = 'Account Verification';
+                        $mail->Body = "
+                            <h1>Verify Your Account</h1>
+                            <p>Click the link below to verify your account:</p>
+                            <a href='http://127.0.0.1/angelicadollendo_online/verify.php?token=$token'>Verify Email</a>";
+
+                        // Send email
+                        if ($mail->send()) {
+                            $message = "Account created successfully! A verification email has been sent to your email address.";
+                            $message_type = "success";  // For success message
+                            echo "<script>window.location.href = 'index.php';</script>"; // Redirect after success
+                        } else {
+                            $message = "There was an error sending the email: " . $mail->ErrorInfo;
+                            $message_type = "error"; // For error message
+                        }
+                    } catch (Exception $e) {
+                        $message = "There was an error sending the email: " . $mail->ErrorInfo;
+                        $message_type = "error"; // For error message
+                    }
+                } else {
+                    $message = "Error: " . $stmt->error;
+                    error_log("Database error: " . $stmt->error);
+                    $message_type = "error"; // For error message
+                }
+                $stmt->close();
             }
         }
-        $stmt->close();
+    } else {
+        $message = "Please fill in all the required fields.";
+        $message_type = "error"; // For error message
     }
 }
+
 // Check if there is already an admin
-$sql_admin_check = "SELECT * FROM users WHERE account_type = 'Admin'";
+$sql_admin_check = "SELECT * FROM users WHERE role = 'admin'";
 $result_admin_check = $conn->query($sql_admin_check);
 $admin_exists = $result_admin_check->num_rows > 0;
 
 $conn->close();
 ?>
+
+
 
 <!DOCTYPE html>
 <html lang="en">
@@ -78,16 +143,16 @@ $conn->close();
 
         /* Pseudo-element for transparent background overlay */
         body::after {
-            content: "";
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: url('/angelicadollendo_online/imgs/dessertBG.png') no-repeat center center;
-            background-size: cover;
-            opacity: 0.6; /* Set the transparency of the background image */
-            z-index: -1; /* Ensure the overlay is behind content */
+        content: "";
+        position: fixed; /* Make the background fixed */
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: url('/angelicadollendo_online/imgs/dessertBG.png') no-repeat center center;
+        background-size: cover;
+        opacity: 0.6; /* Set the transparency of the background image */
+        z-index: -1; /* Ensure the overlay is behind content */
         }
 
         .left-side {
@@ -109,6 +174,7 @@ $conn->close();
             border-radius: 15px 15px 15px 15px; /* Fix border-radius */
             box-shadow: 0px 15px 20px rgba(0, 0, 0, 0.1);
             padding: 0;
+            margin-top: 120px;
         }
 
         .container h2 {
@@ -204,7 +270,6 @@ $conn->close();
 <body>
 
 <div class="left-side">
-    <!-- Add your logo here -->
     <img src="/angelicadollendo_online/imgs/logotrans.png" alt="Logo" class="logo">
     <div class="logo-text">Ordering System</div>
 </div>
@@ -215,7 +280,11 @@ $conn->close();
         <form method="POST" action="" onsubmit="return validatePasswords();">
             <div class="mb-3">
                 <label for="fullname" class="form-label">Full Name</label>
-                <input type="text" class="form-control" id="fullname" name="fullname" required>
+                <input type="text" class="form-control" id="fullname" name="fName" required>
+            </div>
+            <div class="mb-3">
+                <label for="username" class="form-label">Username</label>
+                <input type="text" class="form-control" id="username" name="username" required>
             </div>
             <div class="mb-3">
                 <label for="email" class="form-label">Email</label>
@@ -230,11 +299,11 @@ $conn->close();
                 <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
             </div>
             <div class="mb-3">
-                <label for="account_type" class="form-label">Account Type</label>
-                <select class="form-control" id="account_type" name="account_type" required <?php echo $admin_exists ? 'disabled' : ''; ?>>
-                    <option value="Customer">Customer</option>
-                    <option value="Admin" <?php echo $admin_exists ? 'disabled' : ''; ?>>Admin</option>
-                </select>
+                <label for="role" class="form-label">Account Type</label>
+                <select class="form-control" id="role" name="role" required <?php echo $admin_exists ? 'disabled' : ''; ?>>
+    <option value="customer" <?php echo !$admin_exists ? 'selected' : ''; ?>>Customer</option>
+    <option value="admin" <?php echo $admin_exists ? 'disabled' : ''; ?>>Admin</option>
+</select>
             </div>
             <button type="submit" class="btn btn-purple w-100">Create Account</button>
         </form>
@@ -250,17 +319,21 @@ $conn->close();
 </div>
 
 <script>
-    // Validate if the passwords match
     function validatePasswords() {
         var password = document.getElementById('password').value;
         var confirmPassword = document.getElementById('confirm_password').value;
 
         if (password !== confirmPassword) {
             alert('Passwords do not match!');
-            return false; // Prevent form submission
+            return false;
         }
-        return true; // Allow form submission
+        return true;
     }
+
+     // Show notification after registration is successful
+     <?php if ($message_type == 'success'): ?>
+            alert("Email verification is sent to your email address!");
+        <?php endif; ?>
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
