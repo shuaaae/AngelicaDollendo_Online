@@ -181,7 +181,7 @@ debug_to_console($_SESSION);
                <input type="submit" value="Login">
             </div>
             <div class="signup-link">
-               Not a member? <a href="createaccount.php">Signup now</a>
+               Dont have an account? <a href="createaccount.php">Signup now</a>
             </div>
          </form>
       </div>
